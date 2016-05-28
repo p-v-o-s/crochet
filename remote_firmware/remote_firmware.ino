@@ -20,7 +20,7 @@ void setup() {
   sCmd.addCommand("LED.OFF",     LED_OFF_sCmd_handler);         // Turns LED off
   sCmd.addCommand("FREQ1.READ?", FREQ1_READ_sCmd_handler);         // reads input frequency
   sCmd.setDefaultHandler(UNRECOGNIZED_sCmd_handler);      // Handler for command that isn't matched  (says "What?")
-  Serial.println("Ready");
+  //Serial.println("Ready");
 }
 
 void loop() {
