@@ -53,13 +53,12 @@ void setup() {
   DEBUG_PORT.println(F("SerialCommand Ready"));
   #endif
   
-  // Setup callbacks and command for PacketCommand interface
-  // Setup callbacks for PacketCommand actions and queries
-  pCmd_rf95.addCommand((byte*) "\xFF\x11","FREQ1.READ?", FREQ1_READ_pCmd_query_handler);
-  pCmd_rf95.addCommand((byte*) "\xFF\x41","LED.ON",      LED_ON_pCmd_handler);            // Turns LED on   ("\x41" == "A")
-  pCmd_rf95.addCommand((byte*) "\xFF\x42","LED.OFF",     LED_OFF_pCmd_handler);           // Turns LED off  ("
+  // Setup callbacks for PacketCommand requests
+  pCmd_rf95.addCommand((byte*) "\xFF\x11","FREQ1.READ?", NULL);
+  pCmd_rf95.addCommand((byte*) "\xFF\x41","LED.ON",      NULL);
+  pCmd_rf95.addCommand((byte*) "\xFF\x42","LED.OFF",     NULL);
   //Setup callbacks for PacketCommand replies
-  pCmd_rf95.addCommand((byte*) "\x11","FREQ1!",          NULL);
+  pCmd_rf95.addCommand((byte*) "\x11","FREQ1!",          FREQ1_pCmd_reply_handler);
   //pCmd.registerDefaultHandler(unrecognized);                          // Handler for command that isn't matched  (says "What?")
   pCmd_rf95.registerRecvCallback(rf95_pCmd_recv_callback);
   //pCmd.registerSendCallback(rf95_pCmd_send_callback);
@@ -101,20 +100,21 @@ void loop() {
 // SerialCommand handlers
 
 void FREQ1_READ_sCmd_handler(SerialCommand this_sCmd) {
- if (FreqCount.available()) {
-    unsigned long count = FreqCount.read();
-    this_sCmd.println(count);
-  }
+  pCmd_rf95.resetOutputBuffer();
+  pCmd_rf95.setupOutputCommandByName("FREQ1.READ?");
+  pCmd_rf95.send();
 }
 
 void LED_ON_sCmd_handler(SerialCommand this_sCmd) {
-  this_sCmd.println(F("LED on"));
-  digitalWrite(moteinoLED, HIGH);
+  pCmd_rf95.resetOutputBuffer();
+  pCmd_rf95.setupOutputCommandByName("LED.ON");
+  pCmd_rf95.send();
 }
 
 void LED_OFF_sCmd_handler(SerialCommand this_sCmd) {
-  this_sCmd.println(F("LED off"));
-  digitalWrite(moteinoLED, LOW);
+  pCmd_rf95.resetOutputBuffer();
+  pCmd_rf95.setupOutputCommandByName("LED.OFF");
+  pCmd_rf95.send();
 }
 
 
@@ -134,7 +134,7 @@ bool rf95_pCmd_recv_callback(PacketCommand& this_pCmd){
   if (rf95.available()) {
     bool success = rf95.recv(inputBuffer, &len);
     if(success){
-      //digitalWrite(moteinoLED, HIGH); //blink light
+      digitalWrite(moteinoLED, HIGH); //blink light
       #ifdef DEBUG
       DEBUG_PORT.print("got request: ");
       DEBUG_PORT.println((char*) inputBuffer);
@@ -159,22 +159,9 @@ bool rf95_pCmd_send_callback(PacketCommand& this_pCmd){
   rf95.send(outputBuffer, len);
 }
 
-void FREQ1_READ_pCmd_query_handler(PacketCommand& this_pCmd) {
- if (FreqCount.available()) {
-    uint32_t count = FreqCount.read();
-    this_pCmd.setupOutputCommandByName("FREQ1!");
-    this_pCmd.pack_uint32(count);
-    this_pCmd.send();
-  }
-}
-
-void LED_ON_pCmd_handler(PacketCommand& this_pCmd) {
-  //this_sCmd.println(F("LED on"));
-  digitalWrite(moteinoLED, HIGH);
-}
-
-void LED_OFF_pCmd_handler(PacketCommand& this_pCmd) {
-  //this_sCmd.println(F("LED off"));
-  digitalWrite(moteinoLED, LOW);
+void FREQ1_pCmd_reply_handler(PacketCommand& this_pCmd){
+  uint32_t count;
+  this_pCmd.unpack_uint32(count);
+  Serial.print("FREQ1: ");Serial.println(count);
 }
 
