@@ -37,7 +37,10 @@ PacketCommand pCmd_rf95(PACKETCOMMAND_MAX_COMMANDS,
 // Setup
 void setup() {
   pinMode(moteinoLED, OUTPUT);      // Configure the onboard LED for output
-  digitalWrite(moteinoLED, LOW);    // default to LED off
+  //blink to signal setup
+  digitalWrite(moteinoLED, HIGH);
+  delay(500);
+  digitalWrite(moteinoLED, LOW);     // default to LED off
 
 
   FreqCount.begin(1000); //this is the gateing interval/duration of measurement
@@ -50,7 +53,7 @@ void setup() {
   sCmd.addCommand("FREQ1.READ?", FREQ1_READ_sCmd_handler);         // reads input frequency
   sCmd.setDefaultHandler(UNRECOGNIZED_sCmd_handler);      // Handler for command that isn't matched  (says "What?")
   #ifdef DEBUG
-  DEBUG_PORT.println(F("SerialCommand Ready"));
+  DEBUG_PORT.println(F("#SerialCommand Ready"));
   #endif
   
   // Setup callbacks and command for PacketCommand interface
@@ -62,19 +65,20 @@ void setup() {
   pCmd_rf95.addCommand((byte*) "\x11","FREQ1!",          NULL);
   //pCmd.registerDefaultHandler(unrecognized);                          // Handler for command that isn't matched  (says "What?")
   pCmd_rf95.registerRecvCallback(rf95_pCmd_recv_callback);
-  //pCmd.registerSendCallback(rf95_pCmd_send_callback);
+  pCmd_rf95.registerSendCallback(rf95_pCmd_send_callback);
   
-  //Bring the Radio
+  //Bring up the Radio
   if (!rf95.init()){
     #ifdef DEBUG
-    DEBUG_PORT.print(F("rf95 init failed\n"));
+    DEBUG_PORT.print(F("#rf95 init failed\n"));
     #endif
   }
   else {
+    rf95.setFrequency(FREQUENCY);
     #ifdef DEBUG
-    DEBUG_PORT.print(F("rf95 init OK - "));
+    DEBUG_PORT.print(F("#rf95 init OK - "));
     DEBUG_PORT.print(FREQUENCY);
-    DEBUG_PORT.print(F("mhz\n"));
+    DEBUG_PORT.print(F(" mhz\n"));
     #endif
   }
 }
@@ -88,13 +92,19 @@ void loop() {
     sCmd.processCommand();  // process the command
   }
   
-  //check to see if there is an available packet
-  bool gotPacket = pCmd_rf95.recv();
-  if (gotPacket){
-    PacketShared::STATUS pcs = pCmd_rf95.processInput(); //will dispatch to handler
+  //process incoming radio packets
+  if (rf95.available()) { //there is some radio activity
+      //check to see if there is an available packet
+      PacketShared::STATUS pcs = pCmd_rf95.recv();
+      if (pcs == PacketShared::SUCCESS){
+        //blink to signal packet received and processed
+        //digitalWrite(moteinoLED, HIGH);
+        pcs = pCmd_rf95.processInput(); //will dispatch to handler
+        //digitalWrite(moteinoLED, LOW);
+      }
   }
-  delay(10);
   
+  delay(1000);
 }
 
 //******************************************************************************
@@ -108,12 +118,12 @@ void FREQ1_READ_sCmd_handler(SerialCommand this_sCmd) {
 }
 
 void LED_ON_sCmd_handler(SerialCommand this_sCmd) {
-  this_sCmd.println(F("LED on"));
+  this_sCmd.println(F("#LED on"));
   digitalWrite(moteinoLED, HIGH);
 }
 
 void LED_OFF_sCmd_handler(SerialCommand this_sCmd) {
-  this_sCmd.println(F("LED off"));
+  this_sCmd.println(F("#LED off"));
   digitalWrite(moteinoLED, LOW);
 }
 
@@ -121,47 +131,56 @@ void LED_OFF_sCmd_handler(SerialCommand this_sCmd) {
 // This gets set as the default handler, and gets called when no other command matches.
 void UNRECOGNIZED_sCmd_handler(SerialCommand this_sCmd) {
   SerialCommand::CommandInfo command = this_sCmd.getCurrentCommand();
-  this_sCmd.print(F("Did not recognize \""));
+  this_sCmd.print(F("#Did not recognize \""));
   this_sCmd.print(command.name);
   this_sCmd.println(F("\" as a command."));
 }
 //******************************************************************************
 // PacketCommand callback and handlers
 bool rf95_pCmd_recv_callback(PacketCommand& this_pCmd){
+  //get the buffer address from the pCmd instance
   byte* inputBuffer = this_pCmd.getInputBuffer();
-  uint8_t len; //this value is updated by reference
+  uint8_t len = this_pCmd.getInputBufferSize(); //this value must be initialized to buffer length will be updated by reference to the actual message length
   //handle incoming packets
-  if (rf95.available()) {
-    bool success = rf95.recv(inputBuffer, &len);
-    if(success){
-      //digitalWrite(moteinoLED, HIGH); //blink light
-      #ifdef DEBUG
-      DEBUG_PORT.print("got request: ");
-      DEBUG_PORT.println((char*) inputBuffer);
-      DEBUG_PORT.print("RSSI: ");
-      DEBUG_PORT.println(rf95.lastRssi(), DEC);
-      #endif
-      return true;
+  this_pCmd.resetInputBuffer(); //important, reset the index state
+  bool success = rf95.recv(inputBuffer, &len); //len should be updated to message length
+  if(success){
+    //now we hand the buffer back with the new input length
+    this_pCmd.assignInputBuffer(inputBuffer, len);
+    #ifdef DEBUG
+    DEBUG_PORT.println("#got request:");
+    DEBUG_PORT.print("#\tlen: ");
+    DEBUG_PORT.println(len);
+    DEBUG_PORT.print("#\tinputBuffer: 0x");
+    for(int i=0; i < len; i++){
+      if(inputBuffer[i] < 15){DEBUG_PORT.print(0);}
+      DEBUG_PORT.print(inputBuffer[i],HEX);
     }
-    else{
-      #ifdef DEBUG
-      DEBUG_PORT.println("recv failed");
-      #endif
-      return false;
-    }
+    DEBUG_PORT.println();
+    DEBUG_PORT.print("#\tRSSI: ");
+    DEBUG_PORT.println(rf95.lastRssi(), DEC);
+    #endif
+    return true;
   }
-  return false;
+  else{
+    #ifdef DEBUG
+    DEBUG_PORT.println("#recv failed");
+    #endif
+    return false;
+  }
 }
 
 bool rf95_pCmd_send_callback(PacketCommand& this_pCmd){
   byte* outputBuffer = this_pCmd.getOutputBuffer();
   uint8_t len        = this_pCmd.getOutputBufferIndex();
   rf95.send(outputBuffer, len);
+  rf95.waitPacketSent();
 }
 
 void FREQ1_READ_pCmd_query_handler(PacketCommand& this_pCmd) {
  if (FreqCount.available()) {
     uint32_t count = FreqCount.read();
+    this_pCmd.resetOutputBuffer();
     this_pCmd.setupOutputCommandByName("FREQ1!");
     this_pCmd.pack_uint32(count);
     this_pCmd.send();
