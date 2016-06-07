@@ -1,13 +1,13 @@
 // Crochet
-
-#include <SerialCommand.h>
 #include <PacketCommand.h>
-
-#include <FreqCount.h>
-
 #include <RHReliableDatagram.h>
 #include <RH_RF95.h>
 #include <SPI.h>
+#include "pCmd_RHRD_RF95_module.h"
+
+#include <SerialCommand.h>
+
+#include <FreqCount.h>
 
 //uncomment for debugging messages
 #define DEBUG
@@ -17,28 +17,19 @@
 #endif
 
 #define moteinoLED 9   // Arduino LED on board
-#define FREQUENCY  915
-#define BASESTATION_ADDRESS 1
-#define REMOTE_ADDRESS 2
 
 //Serial Interface for Testing over FDTI
-SerialCommand sCmd(Serial);         // The demo SerialCommand object, initialize with any Stream object
-
-
-//Radio interface for field communication
-#define PACKET_SIZE 32
-RH_RF95 driver_RF95;
-
-//// Class to manage message delivery and receipt, using the driver declared above
-RHReliableDatagram manager_RHRD(driver_RF95, REMOTE_ADDRESS);
+SerialCommand sCmd(Serial);
 
 #define PACKETCOMMAND_MAX_COMMANDS 20
-#define PACKETCOMMAND_INPUT_BUFFER_SIZE PACKET_SIZE
+#define PACKETCOMMAND_INPUT_BUFFER_SIZE 32
 #define PACKETCOMMAND_OUTPUT_BUFFER_SIZE 32
 PacketCommand pCmd_RHRD(PACKETCOMMAND_MAX_COMMANDS,
                         PACKETCOMMAND_INPUT_BUFFER_SIZE,
                         PACKETCOMMAND_OUTPUT_BUFFER_SIZE);
 
+#define BASESTATION_ADDRESS 1
+#define DEFAULT_REMOTE_ADDRESS 2
 //******************************************************************************
 // Setup
 void setup() {
@@ -59,7 +50,7 @@ void setup() {
   sCmd.addCommand("FREQ1.READ?", FREQ1_READ_sCmd_handler);         // reads input frequency
   sCmd.setDefaultHandler(UNRECOGNIZED_sCmd_handler);      // Handler for command that isn't matched  (says "What?")
   #ifdef DEBUG
-  DEBUG_PORT.println(F("#SerialCommand Ready"));
+  DEBUG_PORT.println(F("# SerialCommand Ready"));
   #endif
   
   // Setup callbacks and command for PacketCommand interface
@@ -73,20 +64,12 @@ void setup() {
   pCmd_RHRD.registerRecvCallback(pCmd_RHRD_recv_callback);
   pCmd_RHRD.registerSendCallback(pCmd_RHRD_send_callback);
   
-  //Bring up the Radio
-  if (!manager_RHRD.init()){
-    #ifdef DEBUG
-    DEBUG_PORT.print(F("#RHRD init failed\n"));
-    #endif
-  }
-  else {
-    driver_RF95.setFrequency(FREQUENCY);
-    #ifdef DEBUG
-    DEBUG_PORT.print(F("#rf95 init OK - "));
-    DEBUG_PORT.print(FREQUENCY);
-    DEBUG_PORT.print(F("mhz\n"));
-    #endif
-  }
+  //configure the pCmd_RHRD_RF95_module
+  pCmd_RHRD_module_setup(DEFAULT_REMOTE_ADDRESS,
+                         PCMD_RHRD_DEFAULT_FREQUENCY,
+                         PCMD_RHRD_DEFAULT_NUM_RETRIES
+                         );
+                         
   //configure the default node address
   pCmd_RHRD.setOutputToAddress(BASESTATION_ADDRESS);
 }
@@ -101,16 +84,7 @@ void loop() {
   }
 
   //process incoming radio packets
-  if (manager_RHRD.available()) { //there is some radio activity
-      //check to see if there is an available packet
-      PacketShared::STATUS pcs = pCmd_RHRD.recv();
-      if (pcs == PacketShared::SUCCESS){
-        //blink to signal packet received and processed
-        //digitalWrite(moteinoLED, HIGH);
-        pcs = pCmd_RHRD.processInput(); //will dispatch to handler
-        //digitalWrite(moteinoLED, LOW);
-      }
-  }
+  pCmd_RHRD_module_proccess_input(pCmd_RHRD);
   
   delay(1000);
 }
@@ -126,12 +100,12 @@ void FREQ1_READ_sCmd_handler(SerialCommand this_sCmd) {
 }
 
 void LED_ON_sCmd_handler(SerialCommand this_sCmd) {
-  this_sCmd.println(F("#LED on"));
+  this_sCmd.println(F("# LED on"));
   digitalWrite(moteinoLED, HIGH);
 }
 
 void LED_OFF_sCmd_handler(SerialCommand this_sCmd) {
-  this_sCmd.println(F("#LED off"));
+  this_sCmd.println(F("# LED off"));
   digitalWrite(moteinoLED, LOW);
 }
 
@@ -139,80 +113,12 @@ void LED_OFF_sCmd_handler(SerialCommand this_sCmd) {
 // This gets set as the default handler, and gets called when no other command matches.
 void UNRECOGNIZED_sCmd_handler(SerialCommand this_sCmd) {
   SerialCommand::CommandInfo command = this_sCmd.getCurrentCommand();
-  this_sCmd.print(F("#Did not recognize \""));
+  this_sCmd.print(F("# Did not recognize \""));
   this_sCmd.print(command.name);
   this_sCmd.println(F("\" as a command."));
 }
 //******************************************************************************
-// PacketCommand callback and handlers
-bool pCmd_RHRD_recv_callback(PacketCommand& this_pCmd){
-  //get the buffer address from the pCmd instance
-  byte* inputBuffer = this_pCmd.getInputBuffer();
-  uint8_t len = this_pCmd.getInputBufferSize(); //this value must be initialized to buffer length will be updated by reference to the actual message length
-  uint8_t from_addr;
-  //handle incoming packets
-  this_pCmd.resetInputBuffer(); //important, reset the index state
-  uint32_t recv_timestamp = millis();
-  bool success = manager_RHRD.recvfromAck(inputBuffer, &len, &from_addr); //len should be updated to message length
-  if(success){
-    //now we hand the buffer back with the new input length
-    this_pCmd.assignInputBuffer(inputBuffer, len);
-    PacketCommand::InputProperties input_props = this_pCmd.getInputProperties();
-    input_props.from_addr      = from_addr;
-    input_props.recv_timestamp = recv_timestamp;
-    input_props.RSSI           = driver_RF95.lastRssi();
-    this_pCmd.setInputProperties(input_props);
-    //digitalWrite(moteinoLED, HIGH); //blink light
-    #ifdef DEBUG
-    DEBUG_PORT.println(F("#got request from: 0x"));
-    DEBUG_PORT.println(from_addr,HEX);
-    DEBUG_PORT.print(F("#\tlen: "));
-    DEBUG_PORT.println(len);
-    DEBUG_PORT.print(F("#\tinputBuffer: 0x"));
-    for(int i=0; i < len; i++){
-      if(inputBuffer[i] < 15){DEBUG_PORT.print(0);}
-      DEBUG_PORT.print(inputBuffer[i],HEX);
-    }
-    DEBUG_PORT.println();
-    DEBUG_PORT.print(F("#\tRSSI: "));
-    DEBUG_PORT.println(input_props.RSSI, DEC);
-    #endif
-    return true;
-  }
-  else{
-    #ifdef DEBUG
-    DEBUG_PORT.println(F("#recv failed"));
-    #endif
-    return false;
-  }
-}
-
-bool pCmd_RHRD_send_callback(PacketCommand& this_pCmd){
-  byte* outputBuffer = this_pCmd.getOutputBuffer();
-  size_t       len   = this_pCmd.getOutputLen();
-  uint8_t  to_addr   = (uint8_t) this_pCmd.getOutputToAddress();
-  #ifdef DEBUG
-  DEBUG_PORT.print(F("#pCmd_RHRD_send_callback to: 0x"));
-  DEBUG_PORT.println(to_addr);
-  DEBUG_PORT.print(F("#\toutputBuffer: 0x"));
-  for(int i=0; i < len; i++){
-    if(outputBuffer[i] < 15){DEBUG_PORT.print(0);}
-    DEBUG_PORT.print(outputBuffer[i],HEX);
-  }
-  DEBUG_PORT.println();
-  #endif
-  bool success = manager_RHRD.sendtoWait(outputBuffer, len, to_addr);
-  if(!success){
-    #ifdef DEBUG
-    DEBUG_PORT.println(F("#send failed"));
-    #endif
-    return false;
-  }
-  else{
-    return true;
-  }
-}
-
+// PacketCommand handlers
 void FREQ1_READ_pCmd_query_handler(PacketCommand& this_pCmd) {
  if (FreqCount.available()) {
     uint32_t count = FreqCount.read();
