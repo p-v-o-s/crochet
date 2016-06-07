@@ -9,10 +9,6 @@
 
 #include <FreqCount.h>
 
-
-
-
-
 //uncomment for debugging messages
 #define DEBUG
 
@@ -23,8 +19,7 @@
 #define moteinoLED 9   // Arduino LED on board
 
 //Serial Interface for Testing over FDTI
-SerialCommand sCmd(Serial);         // The demo SerialCommand object, initialize with any Stream object
-
+SerialCommand sCmd(Serial);
 
 #define PACKETCOMMAND_MAX_COMMANDS 20
 #define PACKETCOMMAND_INPUT_BUFFER_SIZE 32
@@ -55,7 +50,7 @@ void setup() {
   sCmd.addCommand("FREQ1.READ?", FREQ1_READ_sCmd_handler);         // reads input frequency
   sCmd.setDefaultHandler(UNRECOGNIZED_sCmd_handler);      // Handler for command that isn't matched  (says "What?")
   #ifdef DEBUG
-  DEBUG_PORT.println(F("#SerialCommand Ready"));
+  DEBUG_PORT.println(F("# SerialCommand Ready"));
   #endif
   
   // Setup callbacks for PacketCommand requests
